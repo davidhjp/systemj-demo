@@ -1,0 +1,213 @@
+
+
+Controller(
+		input signal pusherRetracted,pusherExtended,WPgripped,armAtSource,armAtDest,empty,request;
+		output signal pusherExtend,vacOn,armSource,armDest;
+		// Manual mode
+		input signal pusherExtendM,vacOnM,armSourceM,armDestM;
+		input Integer signal mode;
+		)
+->{
+	// Just for the simulation, to provide input from GUI
+	caploader.CapLoader.runGUI();
+	
+	signal manualMode, autoMode;
+	{
+		while(true){
+			abort(manualMode){
+				System.out.println("entering auto");
+				// Perform initialization
+				System.out.println("Performing initialization");
+				abort(armAtDest){
+					sustain armDest;
+				}
+				System.out.println("Arm at dest");
+				await(pusherRetracted);
+				System.out.println("Pusher retracted");
+
+				while(true){
+					abort(!empty){halt;}
+					await(request);
+					System.out.println("New request");
+					abort(armAtDest){
+						sustain armDest;
+					}
+					System.out.println("Arm at dest");
+
+					abort(pusherExtended){
+						sustain pusherExtend;
+					}
+					System.out.println("Pusher extended");
+					await(pusherRetracted);
+					System.out.println("Pusher retracted");
+
+					abort(armAtSource){
+						sustain armSource;
+					}
+					System.out.println("Arm at source");
+					
+					trap(T){
+						{
+							sustain vacOn;
+						}
+						||
+						{
+							await(WPgripped);
+							System.out.println("WP gripped");
+							abort(armAtDest){
+								sustain armDest;
+							}
+							System.out.println("Arm at dest");
+							exit(T);
+						}
+					}
+
+					await(!WPgripped);
+
+					abort(armAtSource){
+						sustain armSource;
+					}
+					System.out.println("Arm at source");
+					// Need a feedback from the Arm indicating a cap is picked up
+				}
+			}
+			pause; // breaking path
+
+			// Simply forward signals to outputs
+			System.out.println("entering manual");
+			abort(autoMode){
+				{loop{present(pusherExtendM){emit pusherExtend;} pause;} }
+				||
+				{loop{present(vacOnM){emit vacOn;} pause;} }
+				||
+				{loop{present(armSourceM){emit armSource;} pause;} }
+				||
+				{loop{present(armDestM){emit armDest;} pause;} }
+			}
+		}
+	}
+	||
+	{
+		// Checking modes
+		await(mode);
+		while(true){
+			if((Integer)#mode == 0){
+				emit autoMode;
+			}
+			else if((Integer)#mode == 1){
+				emit manualMode;
+			}
+			pause;
+		}
+	}
+}
+
+
+Plant(
+		input signal pusherExtend,vacOn,armSource,armDest;
+		input signal enable,refill;
+		output signal pusherRetracted,pusherExtended,WPgripped,armAtSource,armAtDest,empty;
+		output signal pusherRetractedE,pusherExtendedE,WPgrippedE,armAtSourceE,armAtDestE,emptyE;
+		)
+->
+{
+	signal capDec;
+	int signal capPos;
+	emit capPos(0);
+	{// Arm
+		while(true){
+			abort(armSource && enable){
+				sustain armAtDest;
+			}
+			await(!enable);
+			abort(armDest && enable){
+				sustain armAtSource;
+			}
+			await(!enable);
+		}
+	}
+	||
+	{// Pusher
+		while(true){
+			abort(pusherExtend && enable){
+				sustain pusherRetracted;
+			}
+			await(!enable);
+			abort(!pusherExtend && enable){
+				sustain pusherExtended;
+			}
+			await(!enable);
+		}
+	}
+	||
+	{// Vacuum
+		while(true){
+			present(vacOn && armAtSource){
+				if((Integer)#capPos == 1){
+					emit capPos(0);
+					abort(!vacOn){
+						sustain WPgripped; 
+					}
+					present(armAtSource){
+						emit capPos(1);
+					}
+				}
+			}
+			pause;
+		}
+	}
+	||
+	{
+		/*
+		 * Cap positions
+		 * 0 = at Mag
+		 * 1 = at pick-up
+		 */
+		while(true){
+			// At mag
+			abort(empty){
+				while(true){
+						await(pusherRetracted);
+						await(pusherExtended);
+						// At pick-up
+						emit capPos(1);
+						await(pusherRetracted);
+						emit capDec;
+				}
+			}
+			await(refill);
+		}
+	}
+	||
+	{
+		int capcount = 5;
+		while(true){
+			present(capDec){
+				if(capcount > 0)
+					capcount--;
+			}
+			present(refill){
+				capcount = 5;
+			}
+//      present(pusherRetracted){
+				if(capcount == 0)
+					emit empty;
+//      }
+			pause;
+		}
+	}
+	||
+	{// To viz
+		{while(true){present(pusherRetracted){emit pusherRetractedE;} pause;}}
+		||
+		{while(true){present(pusherExtended){emit pusherExtendedE;} pause;}}
+		||
+		{while(true){present(WPgripped){emit WPgrippedE;} pause;}}
+		||
+		{while(true){present(armAtSource){emit armAtSourceE;} pause;}}
+		||
+		{while(true){present(armAtDest){emit armAtDestE;} pause;}}
+		||
+		{while(true){present(empty){emit emptyE;} pause;}}
+	}
+}

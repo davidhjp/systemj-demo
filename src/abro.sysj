@@ -1,0 +1,30 @@
+/*
+ * ABRO emits signal O upon receiving A and B from the external environment.
+ * 
+ */
+ABRO(input signal A,B,R; output signal O;)->{
+	// Just for the simulation, to provide input from GUI
+	ABROInputGenerator.runGUI();
+	
+	while(true) {
+		abort(R){
+			{
+				await(A); 
+				System.out.println("Received: A"); 
+			}
+			||
+			{
+				await(B); 
+				System.out.println("Received : B");
+			}
+			
+			emit O;
+			System.out.println("Emitted: O");
+			while(true) {
+				pause;
+			}
+		}
+		System.out.println("Aborted");
+		await(!R);
+	}
+}

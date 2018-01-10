@@ -1,0 +1,362 @@
+
+reaction RotaryQueue(:input signal insert, input signal rotate, output signal empty, output Boolean channel out,
+		output Boolean channel simFiller, output Boolean channel simCapper
+		) {
+	Boolean signal simF,simC,simB;
+	{loop{abort(simF){halt;} send simFiller(#simF); }}
+	||
+	{loop{abort(simC){halt;} send simCapper(#simC); }}
+	||
+	{loop{abort(simB){halt;} send out(#simB); }}
+	||
+	{
+		boolean[] q = new boolean[5];
+		loop {
+			abort{
+				boolean o = false, c = false;
+				System.out.print("* Current bottle's locations :");
+				for(int i=0; i<q.length; i++){
+					if(q[i])
+						o = true;
+					System.out.print(" "+(q[i] ? 1 : 0));
+				}
+				System.out.println("\n-------------------------");
+
+				present(rotate){
+					// ----- simulation
+					emit simF(q[1] ? Boolean.TRUE : Boolean.FALSE);
+					emit simC(q[3] ? Boolean.TRUE : Boolean.FALSE);
+					// -----
+
+					emit simB(q[2] ? Boolean.TRUE : Boolean.FALSE);
+				}
+				if(o)
+					halt;
+				else 
+					sustain empty;
+			} case(rotate) do {
+				for(int i=q.length-1; i>0; i--){
+					q[i] = q[i-1];
+				}
+				present(insert)
+					q[0] = true;
+				else
+					q[0] = false;
+			} case (insert) do{
+				present(rotate){
+					for(int i=q.length-1; i>0; i--){
+						q[i] = q[i-1];
+					}
+				}
+				q[0] = true;
+			} 
+		}
+	}
+}
+
+reaction checkReady(: input Boolean channel ReadyIn, output signal ReadyOut) {
+	loop{
+		trap(T){
+			{receive ReadyIn; pause;pause; exit(T);} || { if(#ReadyIn != null && #ReadyIn){sustain ReadyOut;} }
+		}
+		pause;
+	}
+}
+
+ConveyorCD(
+		input Boolean channel rotated;
+		output Boolean channel convReady,incomingBaxter;
+
+		output Boolean channel simFiller, simCapper;
+		)
+->
+{
+	/*input*/ signal bottleAtPos1, bottleLeftPos5;
+	/*output*/ signal motConveyorOnOff;
+
+	signal rotaryRotated,empty,insert;
+	signal simStart, simFinish;
+
+	emit simStart;
+	{
+		loop{
+			trap(T){
+				{
+					await(bottleAtPos1);
+					pause;
+					exit(T);
+				}
+				||
+				{
+					await(immediate empty);
+					pause;
+					send convReady(Boolean.FALSE);
+				}
+			}
+			pause;
+			emit insert;
+			send convReady(Boolean.FALSE);
+			pause;
+//      waitl(2 s);
+
+			{send convReady(Boolean.TRUE);}||{await(rotaryRotated);}
+
+			pause;
+		}
+	}
+	||
+	RotaryQueue(:insert, rotaryRotated, empty, incomingBaxter, simFiller, simCapper)
+	||
+	{
+		loop{ 
+			receive rotated; 
+			emit rotaryRotated;
+			System.out.println("* Rotary rotated");
+			pause;
+		}
+	}
+	||
+	{sustain motConveyorOnOff;}
+	||
+	{// Plant
+		emit bottleAtPos1;	
+		await(rotaryRotated);
+		pause;
+		emit bottleAtPos1;
+		await(rotaryRotated);
+		pause;
+		await(empty);
+		emit simFinish;
+		System.out.println("**************** Simlation Done ****************");
+	}
+}
+
+
+RotaryCD(
+		input Boolean channel fillerReady, capperReady, convReady, baxterReady;
+		output Boolean channel rotated;
+		)
+->
+{
+	/*input*/ signal tableAlignedWithSensor, bottleAtPos5, capOnBottleAtPos1,GUITrigger;
+	/*output*/ signal rotaryTableTrigger;
+
+	signal fR, cR, cvR, bR;
+
+	{
+		loop{
+			{await(fR);}||{await(cR);}||{await(cvR);}||{await(bR);}
+
+			present(bottleAtPos5) {
+//        waitl(1 s);
+				trap(T){ // await(!bottleAtPos5);
+					loop{
+						present(bottleAtPos5){} 
+						else{exit(T);}
+						pause;
+					}
+				}
+			}
+
+			trap(T){
+				{sustain rotaryTableTrigger;}||{/*waitl(100 ms);*/ exit(T);}
+			}
+
+			await(tableAlignedWithSensor);
+
+			send rotated(Boolean.TRUE);
+
+//      waitl(5 ms); // wait until synchronization
+			pause;
+			int i = 0;
+			trap(T){
+				loop{
+					i++;
+					if(i > 12)
+						exit(T);
+					pause;
+				}
+			}
+		}
+	}
+	||
+	{
+		checkReady(:fillerReady, fR)
+		||
+		checkReady(:capperReady, cR)
+		||
+		checkReady(:convReady, cvR)
+		||
+		checkReady(:baxterReady, bR)
+	}
+	||
+	{//Plant 
+		loop{
+			await(rotaryTableTrigger);
+			emit tableAlignedWithSensor;
+		}
+	}
+}
+
+
+CapperCD(
+		output Boolean channel capperReady;
+		// sim
+		input Boolean channel simCapper;
+		)
+->
+{
+	/*input*/ signal bottleAtPos4, gripperXAxisLowered,gripperXAxisLifted,gripperTurnHomePos,gripperTurnFinalPos;
+	/*output*/ signal cylPos5XaxisExtend,gripperTurnRetract,gripperTurnExtend,capGripperPos5Extend,cylClampBottleExtend;
+
+	send capperReady(Boolean.TRUE);
+	{
+		loop{
+			await(bottleAtPos4);
+
+			send capperReady(Boolean.FALSE);
+
+			abort(gripperXAxisLifted){halt;}
+			abort(gripperTurnHomePos){sustain gripperTurnRetract;}
+			trap(T){
+				{sustain cylPos5XaxisExtend;}
+				||
+				{
+					await(gripperXAxisLowered);
+
+					{sustain capGripperPos5Extend;}
+					||	
+					{sustain gripperTurnExtend;}
+					||
+					{
+						await(gripperTurnFinalPos);
+						exit(T);
+					}
+				}
+			}
+			await(gripperXAxisLifted);
+
+			send capperReady(Boolean.TRUE);
+			System.out.println("* Capper operation done");
+
+			trap(T){ // await(!bottleAtPos4);
+				loop{
+					present(bottleAtPos4){}
+					else{exit(T);}
+					pause;
+				}
+			}
+		}	
+	}
+	||
+	{//Plant
+		{
+			loop{
+				abort(gripperTurnRetract){sustain gripperXAxisLifted;}
+				emit gripperTurnHomePos;
+				pause;
+				emit gripperXAxisLowered;
+				pause;
+				emit gripperTurnFinalPos;
+				pause;
+				emit gripperXAxisLifted;
+			}
+		}
+		||
+		{
+			loop{
+				receive simCapper;
+				if(#simCapper)
+					emit bottleAtPos4;
+				pause;
+			}
+		}
+	}
+}
+
+FillerCD(output Boolean channel fillerReady;
+		//sim
+		input Boolean channel simFiller;
+		)
+->
+{
+	/*input*/ signal bottleAtPos2,dosUnitEvac,dosUnitFilled;
+	/*output*/ signal valveInjectorOnOff, valveInletOnOff, dosUnitValveRetract, dosUnitValveExtend ;
+
+	send fillerReady(Boolean.TRUE);
+
+	{
+		loop{
+			await(bottleAtPos2);
+
+			send fillerReady(Boolean.FALSE);
+
+			abort(dosUnitFilled){
+				{
+					sustain valveInjectorOnOff;
+				}
+				||
+				{
+					sustain dosUnitValveRetract;
+				}
+			}
+
+			abort(dosUnitEvac){
+				{
+					sustain valveInletOnOff;
+				}
+				||
+				{
+					sustain dosUnitValveExtend;
+				}
+			}
+
+			send fillerReady(Boolean.TRUE);
+			System.out.println("* Filler operation done");
+
+			trap(T){ // await(!bottleAtPos2);
+				loop{
+					present(bottleAtPos2){}
+					else{exit(T);}
+					pause;
+				}
+			}
+		}
+	}
+	||
+	{//Plant
+		{
+			loop{
+				await(valveInjectorOnOff);
+				emit dosUnitFilled;
+				await(valveInletOnOff);
+				emit dosUnitEvac;
+			}
+		}
+		||
+		{
+				loop{
+					receive simFiller;
+					if((Boolean)#simFiller)
+						emit bottleAtPos2;
+					pause;
+				}
+		}
+	}
+}
+
+
+BaxterCD(
+		output Boolean channel baxterReady;
+		input Boolean channel incomingBaxter;
+		)->{
+
+	send baxterReady(Boolean.TRUE);
+	pause;
+	loop{
+		receive incomingBaxter;
+   if(#incomingBaxter)
+			System.out.println("* Baxter incoming");
+		pause;
+	}
+}
