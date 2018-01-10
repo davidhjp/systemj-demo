@@ -11,7 +11,7 @@ else
 	S=\;
 endif
 
-all: bin/bs
+all: bin/bs bin/abro bin/pcabro bin/caploader
 
 $(SJDK):
 	wget https://github.com/hjparker/systemj-release/releases/download/$(SJVERSION)/$(SJDK_PKG) ;\
@@ -27,3 +27,4 @@ bin/%: src/%.sysj $(SJDK)
 
 clean:
 	rm -rf $(SJDK) bin $(SJDK_PKG)
+	find java -iname *.class -exec rm {} \;
